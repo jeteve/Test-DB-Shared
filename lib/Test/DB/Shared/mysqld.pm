@@ -8,26 +8,34 @@ use DBI;
 use JSON;
 use Test::mysqld;
 
+use File::Slurp;
 use File::Spec;
 use File::Flock::Tiny;
 
 use POSIX qw(SIGTERM WNOHANG);
-
-my $LOCK_FILE = File::Spec->catfile( File::Spec->tmpdir() , 'test-db-shared.lock' );
 
 # Public facing stuff
 has 'dsn' => ( is => 'ro', isa => 'Str', lazy_build => 1 );
 
 
 # Internal cuisine
+
+has '_lock_file' => ( is => 'ro', isa => 'Str', lazy_build => 1 );
+has '_mysqld_file' => ( is => 'ro', isa => 'Str', lazy_build => 1 );
+
+sub _build__lock_file{
+    my ($self) = @_;
+    return File::Spec->catfile( File::Spec->tmpdir() , 'test-db-shared.lock' ).'';
+}
+sub _build__mysqld_file{
+    my ($self) = @_;
+    return File::Spec->catfile( File::Spec->tmpdir() , 'test-db-shared.mysqld' ).'';
+}
+
 has '_testmysqld_args' => ( is => 'ro', isa => 'HashRef', required => 1);
 has '_temp_db_name' => ( is => 'ro', isa => 'Str', lazy_build => 1 );
 has '_shared_mysqld' => ( is => 'ro', isa => 'HashRef', lazy_build => 1 );
 has '_instance_pid' => ( is => 'ro', isa => 'Int', required => 1);
-
-# Mutable args
-# Note that only ONE process will have that set.
-has '_mysqld' => ( is => 'rw', isa => 'Maybe[Test::mysqld]' );
 
 around BUILDARGS => sub {
     my ($orig, $class, @rest ) = @_;
@@ -43,7 +51,7 @@ around BUILDARGS => sub {
 # Note it only works because the instance of the DB will run locally.
 sub _build__temp_db_name{
     my ($self) = @_;
-    return 'test_db_shared_'.$$;
+    return 'test_db_shared_'.( $self + 0 );
 }
 
 sub _build__shared_mysqld{
@@ -54,29 +62,37 @@ sub _build__shared_mysqld{
     # Or it's not there and we need to build it IN A MUTEX way.
     # For a start, let's assume it's not there
     return $self->_monitor(sub{
-                               $log->info("PID $$ Creating new Test::mysqld instance");
-                               my $mysqld = Test::mysqld->new( %{$self->_testmysqld_args()} ) or confess
-                                   $Test::mysqld::errstr;
-                               $self->_mysqld( $mysqld );
-                               $log->trace("PID $$ Saving all $mysqld public properties");
-                               my $saved_mysqld = {};
-                               foreach my $property ( 'dsn', 'pid' ){
-                                   $saved_mysqld->{$property} = $mysqld->$property().''
+                               my $saved_mysqld;
+                               if( ! -e $self->_mysqld_file() ){
+                                   $log->info("PID $$ Creating new Test::mysqld instance");
+                                   my $mysqld = Test::mysqld->new( %{$self->_testmysqld_args()} ) or confess
+                                       $Test::mysqld::errstr;
+                                   $log->trace("PID $$ Saving all $mysqld public properties");
+
+                                   $saved_mysqld = {};
+                                   foreach my $property ( 'dsn', 'pid' ){
+                                       $saved_mysqld->{$property} = $mysqld->$property().''
+                                   }
+                                   $saved_mysqld->{pid_file} = $mysqld->my_cnf()->{'pid-file'};
+                                   # DO NOT LET mysql think it can manage its mysqld PID
+                                   $mysqld->pid( undef );
+
+                                   # Create the pid_registry container.
+                                   $log->trace("PID $$ creating pid_registry table in instance");
+                                   $self->_with_shared_dbh( $saved_mysqld->{dsn},
+                                                            sub{
+                                                                my ($dbh) = @_;
+                                                                $dbh->do('CREATE TABLE pid_registry(pid INTEGER PRIMARY KEY NOT NULL)');
+                                                            });
+                                   my $json_mysqld = JSON::encode_json( $saved_mysqld );
+                                   $log->trace("PID $$ Saving ".$json_mysqld );
+                                   File::Slurp::write_file( $self->_mysqld_file() , {binmode => ':raw'},
+                                                            $json_mysqld );
+                               } else {
+                                   $log->info("PID $$ file ".$self->_mysqld_file()." is there. Reusing cluster");
+                                   $saved_mysqld = JSON::decode_json(
+                                       File::Slurp::read_file( $self->_mysqld_file() , {binmode => ':raw'} ) );
                                }
-                               $saved_mysqld->{pid_file} = $mysqld->my_cnf()->{'pid-file'};
-
-                               # DO NOT LET mysql think it can manage its mysqld PID
-                               $mysqld->pid( undef );
-
-                               # Create the pid_registry container.
-                               $log->trace("PID $$ creating pid_registry table in instance");
-                               $self->_with_shared_dbh( $saved_mysqld->{dsn},
-                                                        sub{
-                                                            my ($dbh) = @_;
-                                                            $dbh->do('CREATE TABLE pid_registry(pid INTEGER PRIMARY KEY NOT NULL)');
-                                                        });
-
-                               $log->trace("PID $$ Saving ".JSON::encode_json( $saved_mysqld ) );
 
                                $self->_with_shared_dbh( $saved_mysqld->{dsn},
                                                         sub{
@@ -89,6 +105,10 @@ sub _build__shared_mysqld{
 
 sub _build_dsn{
     my ($self) = @_;
+    if( $$ != $self->_instance_pid() ){
+        confess("Do not build the dsn in a subprocess of this instance creator");
+    }
+
     my $dsn = $self->_shared_mysqld()->{dsn};
     return $self->_with_shared_dbh( $dsn, sub{
                                         my $dbh = shift;
@@ -105,46 +125,50 @@ sub _build_dsn{
 sub _teardown{
     my ($self) = @_;
     my $dsn = $self->_shared_mysqld()->{dsn};
-    $self->_monitor(sub{
-                        $self->_with_shared_dbh( $dsn,
-                                                 sub{
-                                                     my $dbh = shift;
-                                                     $dbh->do('DELETE FROM pid_registry WHERE pid = ?',{}, $self->_instance_pid());
-                                                     my ( $count_row ) = $dbh->selectrow_array('SELECT COUNT(*) FROM pid_registry');
-                                                     if( $count_row ){
-                                                         $log->info("PID $$ Some PIDs are still registered as using this DB. Not tearing down");
-                                                         return;
-                                                     }
-
-                                                     $log->info("PID $$ no pids anymore in the DB. Tearing down");
-                                                     $log->info("PID $$ terminating mysqld instance (sending SIGTERM to ".$self->pid().")");
-                                                     kill SIGTERM, $self->pid();
-                                                     local $?; # waitpid may change this value :/
-                                                     while (waitpid($self->pid(), 0) <= 0) {}
-                                                     my $pid_file = $self->_shared_mysqld()->{pid_file};
-                                                     $log->trace("PID $$ unlinking mysql pidfile $pid_file. Just in case");
-                                                     unlink( $pid_file );
-                                                     $log->info("PID $$ Ok, mysqld is gone");
-                                                 });
-                    });
+    $self->_with_shared_dbh( $dsn,
+                             sub{
+                                 my $dbh = shift;
+                                 $dbh->do('DELETE FROM pid_registry WHERE pid = ?',{}, $self->_instance_pid());
+                                 my ( $count_row ) = $dbh->selectrow_array('SELECT COUNT(*) FROM pid_registry');
+                                 if( $count_row ){
+                                     $log->info("PID $$ Some PIDs are still registered as using this DB. Not tearing down");
+                                     return;
+                                 }
+                                 $log->info("PID $$ no pids anymore in the DB. Tearing down");
+                                 $log->info("PID $$ unlinking ".$self->_mysqld_file());
+                                 unlink $self->_mysqld_file();
+                                 $log->info("PID $$ terminating mysqld instance (sending SIGTERM to ".$self->pid().")");
+                                 kill SIGTERM, $self->pid();
+                                 while( waitpid( $self->pid() , 0 ) <= 0 ){
+                                     $log->info("PID $$ db pid = ".$self->pid()." not down yet. Waiting 2 seconds");
+                                     sleep(2);
+                                 }
+                                 my $pid_file = $self->_shared_mysqld()->{pid_file};
+                                 $log->trace("PID $$ unlinking mysql pidfile $pid_file. Just in case");
+                                 unlink( $pid_file );
+                                 $log->info("PID $$ Ok, mysqld is gone");
+                             });
 }
 
 sub DEMOLISH{
     my ($self) = @_;
-
-    # We always want to drop the local process database.
-    my $dsn = $self->_shared_mysqld()->{dsn};
-    $self->_with_shared_dbh($dsn, sub{
-                                my $dbh = shift;
-                                my $temp_db_name = $self->_temp_db_name();
-                                $log->info("PID $$ dropping temporary database $temp_db_name");
-                                $dbh->do("DROP DATABASE ".$temp_db_name);
-                            });
-    if( $$ == $self->_instance_pid() ){
-        # Original process that did register itself as a user of
-        # the DB cluster.
-        $self->_teardown();
+    if( $$ != $self->_instance_pid() ){
+        # Do NOT let subprocesses that forked
+        # after the creation of this to have an impact.
+        return;
     }
+
+    $self->_monitor(sub{
+                        # We always want to drop the local process database.
+                        my $dsn = $self->_shared_mysqld()->{dsn};
+                        $self->_with_shared_dbh($dsn, sub{
+                                                    my $dbh = shift;
+                                                    my $temp_db_name = $self->_temp_db_name();
+                                                    $log->info("PID $$ dropping temporary database $temp_db_name");
+                                                    $dbh->do("DROP DATABASE ".$temp_db_name);
+                                                });
+                        $self->_teardown();
+                    });
 }
 
 =head2 pid
@@ -160,8 +184,8 @@ sub pid{
 
 sub _monitor{
     my ($self, $sub) = @_;
-    $log->trace("PID $$ locking file $LOCK_FILE");
-    my $lock = File::Flock::Tiny->lock( $LOCK_FILE );
+    $log->trace("PID $$ locking file ".$self->_lock_file());
+    my $lock = File::Flock::Tiny->lock( $self->_lock_file() );
     return $sub->();
 }
 

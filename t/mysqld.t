@@ -20,8 +20,9 @@ my $db_pid;
     ok( $db_pid = $testdb->pid() , "Ok got SQL pid");
     ok( kill( 0, $db_pid ), "Ok db pid is running");
 
-    my $dbh = DBI->connect($testdb->dsn(), 'root', '' );
+    my $dbh = DBI->connect($testdb->dsn(), 'root', '', { RaiseError => 1 } );
     ok( $dbh->ping(), "Ok can connect to the local test database");
+    ok( $dbh->do('CREATE TABLE bla( foo INTEGER PRIMARY KEY NOT NULL )') );
     my @rows = $dbh->selectall_array('SELECT * FROM test.pid_registry');
     is( $rows[0]->[0] , $$ , "The pid of this test is registered");
 }

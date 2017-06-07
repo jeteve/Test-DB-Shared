@@ -1,4 +1,5 @@
 
+requires 'File::Slurp';
 requires 'File::Flock::Tiny', '>= 0.14';
 requires 'JSON';
 requires 'Moose' , '>= 2.1807';
