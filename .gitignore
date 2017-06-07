@@ -1,0 +1,13 @@
+# Perl stuff
+Makefile
+MYMETA.*
+
+# Emacs files
+**~
+
+# Dzil stuff
+.build
+Test-DB-Shared-*
+
+#
+.cse*
