@@ -23,6 +23,7 @@ has 'dsn' => ( is => 'ro', isa => 'Str', lazy_build => 1 );
 has '_testmysqld_args' => ( is => 'ro', isa => 'HashRef', required => 1);
 has '_temp_db_name' => ( is => 'ro', isa => 'Str', lazy_build => 1 );
 has '_shared_mysqld' => ( is => 'ro', isa => 'HashRef', lazy_build => 1 );
+has '_instance_pid' => ( is => 'ro', isa => 'Int', required => 1);
 
 # Mutable args
 # Note that only ONE process will have that set.
@@ -33,7 +34,8 @@ around BUILDARGS => sub {
 
     my $hash_args = $class->$orig(@rest);
     return {
-        _testmysqld_args => $hash_args
+        _testmysqld_args => $hash_args,
+        _instance_pid => $$
     }
 };
 
@@ -66,7 +68,21 @@ sub _build__shared_mysqld{
                                # DO NOT LET mysql think it can manage its mysqld PID
                                $mysqld->pid( undef );
 
-                               $log->trace("Saving ".JSON::encode_json( $saved_mysqld ) );
+                               # Create the pid_registry container.
+                               $log->trace("PID $$ creating pid_registry table in instance");
+                               $self->_with_shared_dbh( $saved_mysqld->{dsn},
+                                                        sub{
+                                                            my ($dbh) = @_;
+                                                            $dbh->do('CREATE TABLE pid_registry(pid INTEGER PRIMARY KEY NOT NULL)');
+                                                        });
+
+                               $log->trace("PID $$ Saving ".JSON::encode_json( $saved_mysqld ) );
+
+                               $self->_with_shared_dbh( $saved_mysqld->{dsn},
+                                                        sub{
+                                                            my $dbh = shift;
+                                                            $dbh->do('INSERT INTO pid_registry( pid ) VALUES (?)' , {} , $self->_instance_pid());
+                                                        });
                                return $saved_mysqld;
                            });
 }
@@ -85,26 +101,50 @@ sub _build_dsn{
                                     });
 }
 
-sub DEMOLISH{
+
+sub _teardown{
     my ($self) = @_;
     my $dsn = $self->_shared_mysqld()->{dsn};
-    $self->_with_shared_dbh( $dsn,
-                             sub{
-                                 my $dbh = shift;
-                                 my $temp_db_name = $self->_temp_db_name();
-                                 $log->info("PID $$ Tearing down temporary database $temp_db_name");
-                                 $dbh->do("DROP DATABASE ".$temp_db_name);
-                                 # $dbh->do('DELETE FROM sharing_pids WHERE pid = ?', $$ );
-                                 $log->info("PID $$ terminating mysqld instance (sending SIGTERM to ".$self->pid().")");
-                                 kill SIGTERM, $self->pid();
-                                 local $?; # waitpid may change this value :/
-                                 while (waitpid($self->pid(), 0) <= 0) {}
+    $self->_monitor(sub{
+                        $self->_with_shared_dbh( $dsn,
+                                                 sub{
+                                                     my $dbh = shift;
+                                                     $dbh->do('DELETE FROM pid_registry WHERE pid = ?',{}, $self->_instance_pid());
+                                                     my ( $count_row ) = $dbh->selectrow_array('SELECT COUNT(*) FROM pid_registry');
+                                                     if( $count_row ){
+                                                         $log->info("PID $$ Some PIDs are still registered as using this DB. Not tearing down");
+                                                         return;
+                                                     }
 
-                                 my $pid_file = $self->_shared_mysqld()->{pid_file};
-                                 $log->trace("PID $$ unlinking mysql pidfile $pid_file. Just in case");
-                                 unlink( $pid_file );
-                                 $log->info("PID $$ Ok, mysqld is gone");
-                             });
+                                                     $log->info("PID $$ no pids anymore in the DB. Tearing down");
+                                                     $log->info("PID $$ terminating mysqld instance (sending SIGTERM to ".$self->pid().")");
+                                                     kill SIGTERM, $self->pid();
+                                                     local $?; # waitpid may change this value :/
+                                                     while (waitpid($self->pid(), 0) <= 0) {}
+                                                     my $pid_file = $self->_shared_mysqld()->{pid_file};
+                                                     $log->trace("PID $$ unlinking mysql pidfile $pid_file. Just in case");
+                                                     unlink( $pid_file );
+                                                     $log->info("PID $$ Ok, mysqld is gone");
+                                                 });
+                    });
+}
+
+sub DEMOLISH{
+    my ($self) = @_;
+
+    # We always want to drop the local process database.
+    my $dsn = $self->_shared_mysqld()->{dsn};
+    $self->_with_shared_dbh($dsn, sub{
+                                my $dbh = shift;
+                                my $temp_db_name = $self->_temp_db_name();
+                                $log->info("PID $$ dropping temporary database $temp_db_name");
+                                $dbh->do("DROP DATABASE ".$temp_db_name);
+                            });
+    if( $$ == $self->_instance_pid() ){
+        # Original process that did register itself as a user of
+        # the DB cluster.
+        $self->_teardown();
+    }
 }
 
 =head2 pid
