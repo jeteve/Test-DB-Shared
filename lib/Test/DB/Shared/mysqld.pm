@@ -1,5 +1,68 @@
 package Test::DB::Shared::mysqld;
 
+
+=head1 NAME
+
+Test::DB::Shared::mysqld - Replaces (and decorate) Test::mysqld to share the MySQL instance between your tests
+
+=head1 SYNOPSIS
+
+If in your test you use L<Test::mysqld>, this acts as a replacement for Test::mysqld:
+
+  my $mysqld = Test::DB::Shared::mysqld->new(
+      test_namespace => 'myapp',
+      # Then it's plain Test::mysqld config
+      my_cnf => {
+        'skip-networking' => '', # no TCP socket
+     }
+  );
+
+  # and use like Test::mysqld:
+  my $dbh = DBI->connect(
+      $mysqld->dsn(), undef, ''
+  );
+
+And that's it. No plugin, no special code to write, no restructuring of your tests.
+
+=head1 STATEMENT
+
+What you need is a test database, not a test mysqld instance.
+
+=head1 HOW TO USE IT
+
+See synopsis for the change to your test code. For the rest, you need to use C<prove -j number>
+to benefit from it.
+
+If not all your test use the test db, best results will be obtained by using C<prove -s -j number>
+
+=head1 LIMITATIONS
+
+Do NOT use that if your test involves doing anything outside a test database. Tests that manage databases
+will probably break this.
+
+Not all mysqld methods are available. Calls like 'start', 'stop', 'setup', 'read_log' .. are not implemented.
+
+=head1 WHAT THIS DOES
+
+The first time this is used, it will create a Test::mysqld instance in the current process. Then concurrent processes
+that use the same module (with the same parameters) will be given a new Database in this already running instance, instead
+of a new MySQL instance.
+
+When this goes out of scope, the test database is destroy, and the last process to destroy the last database will tear
+down the MySQL instance.
+
+=head1 BUGS, DIAGNOSTICS and TROUBLESHOOTING
+
+There are probably some. To diagnose them, you can run your test in verbose mode ( prove -v ). If that doesn't help,
+you can 'use Log::Any::Adapter qw/Stderr/' at the top of your test to get some very verbose tracing.
+
+If you SIGKILL your whole test suite, bad things will happen. Running in verbose mode
+will most probably tell you which files you should clean up on your filesystem to get back to a working state.
+
+=head1 METHODS
+
+=cut
+
 use Moose;
 use Log::Any qw/$log/;
 
@@ -197,6 +260,13 @@ sub DEMOLISH{
         $log->info("PID $$ Ok, mysqld is gone");
     }
 }
+
+=head1 dsn
+
+Returns the dsn to connect to the test database. Note that the user is root and the password
+is the empty string.
+
+=cut
 
 =head2 pid
 
