@@ -24,8 +24,8 @@ my $db_pid;
     my $dbh = DBI->connect($testdb->dsn(), 'root', '', { RaiseError => 1 } );
     ok( $dbh->ping(), "Ok can connect to the local test database");
     ok( $dbh->do('CREATE TABLE bla( foo INTEGER PRIMARY KEY NOT NULL )') );
-    my @rows = $dbh->selectall_array('SELECT * FROM test.pid_registry');
-    is( $rows[0]->[0] , $$ , "The pid of this test is registered");
+    my $rows = $dbh->selectall_arrayref('SELECT * FROM test.pid_registry');
+    is( $rows->[0]->[0] , $$ , "The pid of this test is registered");
 }
 
 ok( ! kill( 0, $db_pid ), "Ok db pid is NOT running (was teared down by the scope escape)");
