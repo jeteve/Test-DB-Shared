@@ -17,6 +17,12 @@ my $db_pid;
             'skip-networking' => '', # no TCP socket
         }
     ) );
+
+    $testdb->_monitor(sub{
+                          $testdb->_monitor(sub{
+                                                pass("Can nest monitors with no deadlocks");
+                                            });
+                      });
     ok( $testdb->dsn() , "Ok got dsn");
     ok( $db_pid = $testdb->pid() , "Ok got SQL pid");
     ok( kill( 0, $db_pid ), "Ok db pid is running");

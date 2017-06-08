@@ -201,11 +201,20 @@ sub pid{
     return $self->_shared_mysqld()->{pid};
 }
 
+my $in_monitor = {};
 sub _monitor{
     my ($self, $sub) = @_;
+
+    if( $in_monitor->{$self} ){
+        $log->warn("Re-entrant monitor. Will execute sub without locking for deadlock protection");
+        return $sub->();
+    }
     $log->trace("PID $$ locking file ".$self->_lock_file());
+    $in_monitor->{$self} = 1;
     my $lock = File::Flock::Tiny->lock( $self->_lock_file() );
-    return $sub->();
+    my $res = eval{ $sub->(); };
+    delete $in_monitor->{$self};
+    return $res;
 }
 
 sub _with_shared_dbh{
