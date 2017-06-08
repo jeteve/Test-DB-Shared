@@ -14,6 +14,8 @@ use File::Flock::Tiny;
 
 use POSIX qw(SIGTERM WNOHANG);
 
+use Test::More qw//;
+
 # Settings
 has 'test_namespace' => ( is => 'ro', isa => 'Str', default => 'test_db_shared' );
 
@@ -75,7 +77,7 @@ sub _build__shared_mysqld{
     return $self->_monitor(sub{
                                my $saved_mysqld;
                                if( ! -e $self->_mysqld_file() ){
-                                   warn "PID $$ Creating new Test::mysqld instance"."\n";
+                                   Test::More::note( "PID $$ Creating new Test::mysqld instance" );
                                    $log->info("PID $$ Creating new Test::mysqld instance");
                                    my $mysqld = Test::mysqld->new( %{$self->_testmysqld_args()} ) or confess
                                        $Test::mysqld::errstr;
@@ -103,7 +105,7 @@ sub _build__shared_mysqld{
                                    File::Slurp::write_file( $self->_mysqld_file() , {binmode => ':raw'},
                                                             $json_mysqld );
                                } else {
-                                   warn "PID $$ Reusing Test::mysqld from ".$self->_mysqld_file()."\n";
+                                   Test::More::note("PID $$ Reusing Test::mysqld from ".$self->_mysqld_file());
                                    $log->info("PID $$ file ".$self->_mysqld_file()." is there. Reusing cluster");
                                    $saved_mysqld = JSON::decode_json(
                                        File::Slurp::read_file( $self->_mysqld_file() , {binmode => ':raw'} ) );
@@ -154,6 +156,7 @@ sub _teardown{
                                  $log->info("PID $$ no pids anymore in the DB. Tearing down");
                                  $log->info("PID $$ unlinking ".$self->_mysqld_file());
                                  unlink $self->_mysqld_file();
+                                 Test::More::note("PID $$ terminating mysqld instance (sending SIGTERM to ".$self->pid().")");
                                  $log->info("PID $$ terminating mysqld instance (sending SIGTERM to ".$self->pid().")");
                                  kill SIGTERM, $self->pid();
                              });
@@ -182,6 +185,7 @@ sub DEMOLISH{
     if( $self->_holds_mysqld() ){
         # This is the mysqld holder process. Need to wait for it
         # before exiting
+        Test::More::note("PID $$ mysqld holder process waiting for mysqld termination");
         $log->info("PID $$ mysqld holder process waiting for mysqld termination");
         while( waitpid( $self->pid() , 0 ) <= 0 ){
             $log->info("PID $$ db pid = ".$self->pid()." not down yet. Waiting 2 seconds");
