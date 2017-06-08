@@ -75,6 +75,7 @@ sub _build__shared_mysqld{
     return $self->_monitor(sub{
                                my $saved_mysqld;
                                if( ! -e $self->_mysqld_file() ){
+                                   warn "PID $$ Creating new Test::mysqld instance"."\n";
                                    $log->info("PID $$ Creating new Test::mysqld instance");
                                    my $mysqld = Test::mysqld->new( %{$self->_testmysqld_args()} ) or confess
                                        $Test::mysqld::errstr;
@@ -102,6 +103,7 @@ sub _build__shared_mysqld{
                                    File::Slurp::write_file( $self->_mysqld_file() , {binmode => ':raw'},
                                                             $json_mysqld );
                                } else {
+                                   warn "PID $$ Reusing Test::mysqld from ".$self->_mysqld_file()."\n";
                                    $log->info("PID $$ file ".$self->_mysqld_file()." is there. Reusing cluster");
                                    $saved_mysqld = JSON::decode_json(
                                        File::Slurp::read_file( $self->_mysqld_file() , {binmode => ':raw'} ) );
