@@ -16,6 +16,7 @@ foreach my $i ( 1..3 ){
     unless( $child_pid = fork() ){
         my $db_pid;
         my $testdb = Test::DB::Shared::mysqld->new(
+            test_namespace => 'test_forked',
             my_cnf => {
                 'skip-networking' => '', # no TCP socket
             }

@@ -12,6 +12,7 @@ use Log::Any::Adapter qw/Stderr/;
 my $db_pid;
 {
     ok( my $testdb = Test::DB::Shared::mysqld->new(
+        test_namespace => 'mysqld_t',
         my_cnf => {
             'skip-networking' => '', # no TCP socket
         }

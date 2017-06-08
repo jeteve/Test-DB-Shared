@@ -14,6 +14,9 @@ use File::Flock::Tiny;
 
 use POSIX qw(SIGTERM WNOHANG);
 
+# Settings
+has 'test_namespace' => ( is => 'ro', isa => 'Str', default => 'test_db_shared' );
+
 # Public facing stuff
 has 'dsn' => ( is => 'ro', isa => 'Str', lazy_build => 1 );
 
@@ -25,11 +28,11 @@ has '_mysqld_file' => ( is => 'ro', isa => 'Str', lazy_build => 1 );
 
 sub _build__lock_file{
     my ($self) = @_;
-    return File::Spec->catfile( File::Spec->tmpdir() , 'test-db-shared.lock' ).'';
+    return File::Spec->catfile( File::Spec->tmpdir() , $self->_namespace().'.lock' ).'';
 }
 sub _build__mysqld_file{
     my ($self) = @_;
-    return File::Spec->catfile( File::Spec->tmpdir() , 'test-db-shared.mysqld' ).'';
+    return File::Spec->catfile( File::Spec->tmpdir() , $self->_namespace().'.mysqld' ).'';
 }
 
 has '_testmysqld_args' => ( is => 'ro', isa => 'HashRef', required => 1);
@@ -42,17 +45,24 @@ around BUILDARGS => sub {
     my ($orig, $class, @rest ) = @_;
 
     my $hash_args = $class->$orig(@rest);
+    my $test_namespace = delete $hash_args->{test_namespace};
     return {
         _testmysqld_args => $hash_args,
-        _instance_pid => $$
+        _instance_pid => $$,
+        ( $test_namespace ? ( test_namespace => $test_namespace ) : () ),
     }
 };
+
+sub _namespace{
+    my ($self) = @_;
+    return 'tdbs49C7_'.$self->test_namespace()
+}
 
 # Build a temp DB name according to this pid.
 # Note it only works because the instance of the DB will run locally.
 sub _build__temp_db_name{
     my ($self) = @_;
-    return 'test_db_shared_'.( $self + 0 );
+    return $self->_namespace().( $self + 0 );
 }
 
 sub _build__shared_mysqld{

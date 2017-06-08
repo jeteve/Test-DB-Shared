@@ -27,4 +27,4 @@ install:
   - cpanm --quiet --notest --installdeps .
 
 script:
-  - dzil test --extended
+  - dzil test --extended -j 4
