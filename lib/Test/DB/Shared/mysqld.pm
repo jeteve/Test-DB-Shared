@@ -36,6 +36,7 @@ has '_testmysqld_args' => ( is => 'ro', isa => 'HashRef', required => 1);
 has '_temp_db_name' => ( is => 'ro', isa => 'Str', lazy_build => 1 );
 has '_shared_mysqld' => ( is => 'ro', isa => 'HashRef', lazy_build => 1 );
 has '_instance_pid' => ( is => 'ro', isa => 'Int', required => 1);
+has '_holds_mysqld' => ( is => 'rw', isa => 'Bool', default => 0);
 
 around BUILDARGS => sub {
     my ($orig, $class, @rest ) = @_;
@@ -76,6 +77,8 @@ sub _build__shared_mysqld{
                                    $saved_mysqld->{pid_file} = $mysqld->my_cnf()->{'pid-file'};
                                    # DO NOT LET mysql think it can manage its mysqld PID
                                    $mysqld->pid( undef );
+
+                                   $self->_holds_mysqld( 1 );
 
                                    # Create the pid_registry container.
                                    $log->trace("PID $$ creating pid_registry table in instance");
@@ -139,14 +142,6 @@ sub _teardown{
                                  unlink $self->_mysqld_file();
                                  $log->info("PID $$ terminating mysqld instance (sending SIGTERM to ".$self->pid().")");
                                  kill SIGTERM, $self->pid();
-                                 while( waitpid( $self->pid() , 0 ) <= 0 ){
-                                     $log->info("PID $$ db pid = ".$self->pid()." not down yet. Waiting 2 seconds");
-                                     sleep(2);
-                                 }
-                                 my $pid_file = $self->_shared_mysqld()->{pid_file};
-                                 $log->trace("PID $$ unlinking mysql pidfile $pid_file. Just in case");
-                                 unlink( $pid_file );
-                                 $log->info("PID $$ Ok, mysqld is gone");
                              });
 }
 
@@ -169,6 +164,20 @@ sub DEMOLISH{
                                                 });
                         $self->_teardown();
                     });
+
+    if( $self->_holds_mysqld() ){
+        # This is the mysqld holder process. Need to wait for it
+        # before exiting
+        $log->info("PID $$ mysqld holder process waiting for mysqld termination");
+        while( waitpid( $self->pid() , 0 ) <= 0 ){
+            $log->info("PID $$ db pid = ".$self->pid()." not down yet. Waiting 2 seconds");
+            sleep(2);
+        }
+        my $pid_file = $self->_shared_mysqld()->{pid_file};
+        $log->trace("PID $$ unlinking mysql pidfile $pid_file. Just in case");
+        unlink( $pid_file );
+        $log->info("PID $$ Ok, mysqld is gone");
+    }
 }
 
 =head2 pid
