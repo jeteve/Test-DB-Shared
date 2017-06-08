@@ -95,7 +95,7 @@ sub _build__shared_mysqld{
                                    $self->_with_shared_dbh( $saved_mysqld->{dsn},
                                                             sub{
                                                                 my ($dbh) = @_;
-                                                                $dbh->do('CREATE TABLE pid_registry(pid INTEGER PRIMARY KEY NOT NULL)');
+                                                                $dbh->do('CREATE TABLE pid_registry(pid INTEGER NOT NULL, instance BIGINT NOT NULL, PRIMARY KEY(pid, instance))');
                                                             });
                                    my $json_mysqld = JSON::encode_json( $saved_mysqld );
                                    $log->trace("PID $$ Saving ".$json_mysqld );
@@ -110,7 +110,9 @@ sub _build__shared_mysqld{
                                $self->_with_shared_dbh( $saved_mysqld->{dsn},
                                                         sub{
                                                             my $dbh = shift;
-                                                            $dbh->do('INSERT INTO pid_registry( pid ) VALUES (?)' , {} , $self->_instance_pid());
+                                                            $dbh->do('INSERT INTO pid_registry( pid, instance ) VALUES (?,?)' , {},
+                                                                     $self->_instance_pid(), ( $self + 0 )
+                                                                 );
                                                         });
                                return $saved_mysqld;
                            });
@@ -141,10 +143,10 @@ sub _teardown{
     $self->_with_shared_dbh( $dsn,
                              sub{
                                  my $dbh = shift;
-                                 $dbh->do('DELETE FROM pid_registry WHERE pid = ?',{}, $self->_instance_pid());
+                                 $dbh->do('DELETE FROM pid_registry WHERE pid = ? AND instance = ? ',{}, $self->_instance_pid() , ( $self + 0 ) );
                                  my ( $count_row ) = $dbh->selectrow_array('SELECT COUNT(*) FROM pid_registry');
                                  if( $count_row ){
-                                     $log->info("PID $$ Some PIDs are still registered as using this DB. Not tearing down");
+                                     $log->info("PID $$ Some PIDs,Instances are still registered as using this DB. Not tearing down");
                                      return;
                                  }
                                  $log->info("PID $$ no pids anymore in the DB. Tearing down");
@@ -206,7 +208,7 @@ sub _monitor{
     my ($self, $sub) = @_;
 
     if( $in_monitor->{$self} ){
-        $log->warn("Re-entrant monitor. Will execute sub without locking for deadlock protection");
+        $log->warn("PID $$ Re-entrant monitor. Will execute sub without locking for deadlock protection");
         return $sub->();
     }
     $log->trace("PID $$ locking file ".$self->_lock_file());
