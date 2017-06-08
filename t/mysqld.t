@@ -7,7 +7,7 @@ use DBI;
 use Test::More;
 use Test::DB::Shared::mysqld;
 
-use Log::Any::Adapter qw/Stderr/;
+# use Log::Any::Adapter qw/Stderr/;
 
 my $db_pid;
 {

@@ -8,3 +8,4 @@ requires 'Log::Any', '>= 1.045';
 requires 'Test::mysqld', '>= 0.21';
 
 test_requires 'Test::More', '>= 1.302073';
+test_requires 'File::Temp';
