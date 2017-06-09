@@ -9,7 +9,6 @@ perl:
 
 services:
   - mysql
-  - postgresql
 
 cache:
   directories:
