@@ -104,7 +104,7 @@ has '_testmysqld_args' => ( is => 'ro', isa => 'HashRef', required => 1);
 has '_temp_db_name' => ( is => 'ro', isa => 'Str', lazy_build => 1 );
 has '_shared_mysqld' => ( is => 'ro', isa => 'HashRef', lazy_build => 1 );
 has '_instance_pid' => ( is => 'ro', isa => 'Int', required => 1);
-has '_holds_mysqld' => ( is => 'rw', isa => 'Bool', default => 0);
+has '_holds_mysqld' => ( is => 'rw', isa => 'Maybe[Test::mysqld]', default => undef);
 
 around BUILDARGS => sub {
     my ($orig, $class, @rest ) = @_;
@@ -154,7 +154,7 @@ sub _build__shared_mysqld{
                                    # DO NOT LET mysql think it can manage its mysqld PID
                                    $mysqld->pid( undef );
 
-                                   $self->_holds_mysqld( 1 );
+                                   $self->_holds_mysqld( $mysqld );
 
                                    # Create the pid_registry container.
                                    $log->trace("PID $$ creating pid_registry table in instance");
@@ -245,7 +245,7 @@ sub DEMOLISH{
                         $self->_teardown();
                     });
 
-    if( $self->_holds_mysqld() ){
+    if( my $test_mysqld = $self->_holds_mysqld() ){
         # This is the mysqld holder process. Need to wait for it
         # before exiting
         Test::More::note("PID $$ mysqld holder process waiting for mysqld termination");
@@ -291,7 +291,11 @@ sub _monitor{
     $in_monitor->{$self} = 1;
     my $lock = File::Flock::Tiny->lock( $self->_lock_file() );
     my $res = eval{ $sub->(); };
+    my $err = $@;
     delete $in_monitor->{$self};
+    if( $err ){
+        confess($err);
+    }
     return $res;
 }
 
