@@ -171,7 +171,7 @@ L<App::Prove> plugin implementation. Do NOT use that yourself.
             if( ! -e $config_file ){
                 confess("Cannot find config file $config_file");
             }else{
-                $config = JSON::decode_json( File::Slurp::read_file( $config_file, { binmode => ':raw' } ) );
+                $config = JSON::decode_json( scalar( File::Slurp::read_file( $config_file, { binmode => ':raw' } ) ) );
             }
         }
         $plugin_instance = $class->new( $config );
@@ -236,7 +236,8 @@ sub _build__shared_mysqld{
                                    Test::More::note("PID $$ Reusing Test::mysqld from ".$self->_mysqld_file());
                                    $log->info("PID $$ file ".$self->_mysqld_file()." is there. Reusing cluster");
                                    $saved_mysqld = JSON::decode_json(
-                                       File::Slurp::read_file( $self->_mysqld_file() , {binmode => ':raw'} ) );
+                                       scalar( File::Slurp::read_file( $self->_mysqld_file() , {binmode => ':raw'} ) )
+                                   );
                                }
 
                                $self->_with_shared_dbh( $saved_mysqld->{dsn},
