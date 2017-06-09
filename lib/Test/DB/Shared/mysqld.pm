@@ -22,7 +22,8 @@ If in your test you use L<Test::mysqld>, this acts as a replacement for Test::my
       $mysqld->dsn(), undef, ''
   );
 
-And that's it. No plugin, no special code to write, no restructuring of your tests.
+And that's it. No special code to write, no restructuring of your tests, and using as
+a prove plugin is optional.
 
 =head1 STATEMENT
 
@@ -34,6 +35,24 @@ See synopsis for the change to your test code. For the rest, you need to use C<p
 to benefit from it.
 
 If not all your test use the test db, best results will be obtained by using C<prove -s -j number>
+
+=head2 Using it as a prove Plugin
+
+To speed things even further, you can use that as a prove plugin, with an optional config file:
+
+  prove -PTest::DB::Shared::mysqld
+
+Or
+
+  prove -PTest::DB::Shared::mysqld=./testmysqld.json
+
+The ./testmysqld.json file can contain the arguments to Test::DB::Shared::mysqld in a json format (see SYNOPSIS). They
+will be used to build one instance for the whole test suite.
+
+If no such file is given, the default configuration is the one specified in the SYNOPSIS, but with a randomly generated test_namespace.
+
+Note that using this plugin will result in all your Test::DB::Shared::mysqld instances in your t/ files using the same configuration,
+regardless of what configuration you give in this or this test.
 
 =head1 LIMITATIONS
 
@@ -111,6 +130,15 @@ around BUILDARGS => sub {
 
     my $hash_args = $class->$orig(@rest);
     my $test_namespace = delete $hash_args->{test_namespace};
+
+    if( my $plugin_instance = $class->plugin_instance() ){
+        Test::More::diag("PID $$ plugin instance is there. Will reuse its config and DISCARD your config");
+        return {
+            _testmysqld_args => $plugin_instance->_testmysqld_args(),
+            _instance_pid => $$,
+            ( $plugin_instance->test_namespace() ? ( test_namespace => $plugin_instance->test_namespace() ) : () ),
+        };
+    }
     return {
         _testmysqld_args => $hash_args,
         _instance_pid => $$,
@@ -118,9 +146,46 @@ around BUILDARGS => sub {
     }
 };
 
+
+=head2 load
+
+L<App::Prove> plugin implementation. Do NOT use that yourself.
+
+=cut
+
+{
+    my $plugin_instance;
+    sub load{
+        my ($class, $prove) = @_;
+        my @args = @{$prove->{args} || []};
+        my $config = {
+            test_namespace => 'plugin'.$$.int( rand(1000) ),
+            my_cnf => {
+                'skip-networking' => '', # no TCP socket
+            }
+        };
+        my $config_file = $args[0];
+        unless( $config_file ){
+            Test::More::diag( __PACKAGE__." PID $$ config file is not given. Using default config" );
+        }else{
+            if( ! -e $config_file ){
+                confess("Cannot find config file $config_file");
+            }else{
+                $config = JSON::decode_json( File::Slurp::read_file( $config_file, { binmode => ':raw' } ) );
+            }
+        }
+        $plugin_instance = $class->new( $config );
+        Test::More::diag( __PACKAGE__." PID $$ plugin instance mysqld lives at ".$plugin_instance->dsn() );
+        Test::More::diag( __PACKAGE__." PID $$ plugin instance mysqld descriptor is ".$plugin_instance->_mysqld_file() );
+        return 1;
+    }
+    sub plugin_instance{ return $plugin_instance; }
+    sub tear_down_plugin_instance{ $plugin_instance = undef; }
+}
+
 sub _namespace{
     my ($self) = @_;
-    return 'tdbs49C7_'.$self->test_namespace()
+    return 'tdbs49C7_'.$self->test_namespace();
 }
 
 # Build a temp DB name according to this pid.
