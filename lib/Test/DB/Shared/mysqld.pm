@@ -131,18 +131,11 @@ around BUILDARGS => sub {
     my $hash_args = $class->$orig(@rest);
     my $test_namespace = delete $hash_args->{test_namespace};
 
-    if( my $plugin_instance = $class->plugin_instance() ){
-        Test::More::diag("PID $$ plugin instance is there. Will reuse its config and DISCARD your config");
-        return {
-            _testmysqld_args => $plugin_instance->_testmysqld_args(),
-            _instance_pid => $$,
-            ( $plugin_instance->test_namespace() ? ( test_namespace => $plugin_instance->test_namespace() ) : () ),
-        };
-    }
     return {
         _testmysqld_args => $hash_args,
         _instance_pid => $$,
         ( $test_namespace ? ( test_namespace => $test_namespace ) : () ),
+        ( $ENV{TEST_DB_SHARED_NAMESPACE} ? ( test_namespace => $ENV{TEST_DB_SHARED_NAMESPACE} ) : () ),
     }
 };
 
@@ -179,6 +172,8 @@ L<App::Prove> plugin implementation. Do NOT use that yourself.
         unlink( $plugin_instance->_mysqld_file() );
         Test::More::diag( __PACKAGE__." PID $$ plugin instance mysqld lives at ".$plugin_instance->dsn() );
         Test::More::diag( __PACKAGE__." PID $$ plugin instance mysqld descriptor is ".$plugin_instance->_mysqld_file() );
+        # This will inform all the other instances to reuse the namespace (see BUILDARGS).
+        $ENV{TEST_DB_SHARED_NAMESPACE} = $plugin_instance->test_namespace();
         return 1;
     }
     sub plugin_instance{ return $plugin_instance; }
