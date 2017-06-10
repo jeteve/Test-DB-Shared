@@ -175,13 +175,23 @@ L<App::Prove> plugin implementation. Do NOT use that yourself.
             }
         }
         $plugin_instance = $class->new( $config );
+        ## Just in case.
+        unlink( $plugin_instance->_mysqld_file() );
         Test::More::diag( __PACKAGE__." PID $$ plugin instance mysqld lives at ".$plugin_instance->dsn() );
         Test::More::diag( __PACKAGE__." PID $$ plugin instance mysqld descriptor is ".$plugin_instance->_mysqld_file() );
         return 1;
     }
     sub plugin_instance{ return $plugin_instance; }
     sub tear_down_plugin_instance{ $plugin_instance = undef; }
+
+    # For the plugin to 'just work'
+    # on unloading this code.
+    sub END{
+        __PACKAGE__->tear_down_plugin_instance();
+    }
 }
+
+
 
 sub _namespace{
     my ($self) = @_;
@@ -302,6 +312,7 @@ sub DEMOLISH{
     $self->_monitor(sub{
                         # We always want to drop the local process database.
                         my $dsn = $self->_shared_mysqld()->{dsn};
+                        $log->info("PID $$ Will drop database on dsn = $dsn");
                         $self->_with_shared_dbh($dsn, sub{
                                                     my $dbh = shift;
                                                     my $temp_db_name = $self->_temp_db_name();
