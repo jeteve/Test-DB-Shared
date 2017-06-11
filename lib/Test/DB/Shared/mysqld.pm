@@ -366,6 +366,7 @@ sub _monitor{
     my $res = eval{ $sub->(); };
     my $err = $@;
     delete $in_monitor->{$self};
+    $lock->release();
     if( $err ){
         confess($err);
     }
