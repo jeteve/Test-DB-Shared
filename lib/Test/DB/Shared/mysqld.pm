@@ -250,7 +250,7 @@ sub _build__shared_mysqld{
                                                         sub{
                                                             my $dbh = shift;
                                                             $dbh->do('INSERT INTO pid_registry( pid, instance ) VALUES (?,?)' , {},
-                                                                     $self->_instance_pid(), ( $self + 0 )
+                                                                     $self->_instance_pid(), ( $self + $self->_instance_pid() )
                                                                  );
                                                         });
                                return $saved_mysqld;
@@ -282,7 +282,7 @@ sub _teardown{
     $self->_with_shared_dbh( $dsn,
                              sub{
                                  my $dbh = shift;
-                                 $dbh->do('DELETE FROM pid_registry WHERE pid = ? AND instance = ? ',{}, $self->_instance_pid() , ( $self + 0 ) );
+                                 $dbh->do('DELETE FROM pid_registry WHERE pid = ? AND instance = ? ',{}, $self->_instance_pid() , ( $self + $self->_instance_pid() ) );
                                  my ( $count_row ) = $dbh->selectrow_array('SELECT COUNT(*) FROM pid_registry');
                                  if( $count_row ){
                                      $log->info("PID $$ Some PIDs,Instances are still registered as using this DB. Not tearing down");
