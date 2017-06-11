@@ -82,7 +82,8 @@ will most probably tell you which files you should clean up on your filesystem t
 
 =cut
 
-use Moose;
+use Moo;
+use Carp qw/confess/;
 use Log::Any qw/$log/;
 
 use DBI;
@@ -99,16 +100,16 @@ use POSIX qw(SIGTERM WNOHANG);
 use Test::More qw//;
 
 # Settings
-has 'test_namespace' => ( is => 'ro', isa => 'Str', default => 'test_db_shared' );
+has 'test_namespace' => ( is => 'ro', default => 'test_db_shared' );
 
 # Public facing stuff
-has 'dsn' => ( is => 'ro', isa => 'Str', lazy_build => 1 );
+has 'dsn' => ( is => 'lazy' );
 
 
 # Internal cuisine
 
-has '_lock_file' => ( is => 'ro', isa => 'Str', lazy_build => 1 );
-has '_mysqld_file' => ( is => 'ro', isa => 'Str', lazy_build => 1 );
+has '_lock_file' => ( is => 'lazy' );
+has '_mysqld_file' => ( is => 'lazy' );
 
 sub _build__lock_file{
     my ($self) = @_;
@@ -119,11 +120,11 @@ sub _build__mysqld_file{
     return File::Spec->catfile( File::Spec->tmpdir() , $self->_namespace().'.mysqld' ).'';
 }
 
-has '_testmysqld_args' => ( is => 'ro', isa => 'HashRef', required => 1);
-has '_temp_db_name' => ( is => 'ro', isa => 'Str', lazy_build => 1 );
-has '_shared_mysqld' => ( is => 'ro', isa => 'HashRef', lazy_build => 1 );
-has '_instance_pid' => ( is => 'ro', isa => 'Int', required => 1);
-has '_holds_mysqld' => ( is => 'rw', isa => 'Maybe[Test::mysqld]', default => undef);
+has '_testmysqld_args' => ( is => 'ro', required => 1);
+has '_temp_db_name' => ( is => 'lazy' );
+has '_shared_mysqld' => ( is => 'lazy' );
+has '_instance_pid' => ( is => 'ro', required => 1);
+has '_holds_mysqld' => ( is => 'rw', default => undef);
 
 around BUILDARGS => sub {
     my ($orig, $class, @rest ) = @_;
@@ -197,7 +198,7 @@ sub _namespace{
 # Note it only works because the instance of the DB will run locally.
 sub _build__temp_db_name{
     my ($self) = @_;
-    return $self->_namespace().( $self + 0 );
+    return $self->_namespace().( $self + $$ );
 }
 
 sub _build__shared_mysqld{
