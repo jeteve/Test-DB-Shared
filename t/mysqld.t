@@ -7,7 +7,7 @@ use DBI;
 use Test::More;
 use Test::DB::Shared::mysqld;
 
-use Log::Any::Adapter qw/Stderr/;
+# use Log::Any::Adapter qw/Stderr/;
 
 my $db_pid;
 {
@@ -47,6 +47,5 @@ my $db_pid;
 }
 
 ok( ! kill( 0, $db_pid ), "Ok db pid is NOT running (was teared down by the scope escape)");
-
 
 done_testing();

@@ -126,6 +126,8 @@ has '_shared_mysqld' => ( is => 'lazy' );
 has '_instance_pid' => ( is => 'ro', required => 1);
 has '_holds_mysqld' => ( is => 'rw', default => undef);
 
+my $PROCESS_INSTANCES = {};
+
 around BUILDARGS => sub {
     my ($orig, $class, @rest ) = @_;
 
@@ -140,6 +142,13 @@ around BUILDARGS => sub {
     }
 };
 
+sub BUILD{
+    my ($self) = @_;
+    my $wself = \$self;
+    Scalar::Util::weaken( $self );
+    $PROCESS_INSTANCES->{$self.''} = $wself;
+    return $self;
+}
 
 =head2 load
 
@@ -275,7 +284,6 @@ sub _build_dsn{
                                     });
 }
 
-
 sub _teardown{
     my ($self) = @_;
     my $dsn = $self->_shared_mysqld()->{dsn};
@@ -305,6 +313,9 @@ sub DEMOLISH{
         return;
     }
 
+    delete $PROCESS_INSTANCES->{$self.''};
+
+
     $self->_monitor(sub{
                         # We always want to drop the local process database.
                         my $dsn = $self->_shared_mysqld()->{dsn};
@@ -317,6 +328,16 @@ sub DEMOLISH{
                                                 });
                         $self->_teardown();
                     });
+
+    if( my @other_instances = keys( %{$PROCESS_INSTANCES} ) ){
+        # Other instances are still alive (in the same PID). Pass on the test mysqld to them
+        # if we have one.
+        if( my $test_mysqld = $self->_holds_mysqld() ){
+            $log->info("PID $$ instance $self giving mysqld to other living instance ".$other_instances[0]);
+            ${$PROCESS_INSTANCES->{$other_instances[0]}}->_holds_mysqld( $self->_holds_mysqld() );
+            $self->_holds_mysqld( undef );
+        }
+    }
 
     if( my $test_mysqld = $self->_holds_mysqld() ){
         # This is the mysqld holder process. Need to wait for it
