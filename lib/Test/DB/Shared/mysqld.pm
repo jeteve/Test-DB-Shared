@@ -124,7 +124,7 @@ has '_testmysqld_args' => ( is => 'ro', required => 1);
 has '_temp_db_name' => ( is => 'lazy' );
 has '_shared_mysqld' => ( is => 'lazy' );
 has '_instance_pid' => ( is => 'ro', required => 1);
-has '_holds_mysqld' => ( is => 'rw', default => undef);
+has '_holds_mysqld' => ( is => 'rw' );
 
 my $PROCESS_INSTANCES = {};
 
